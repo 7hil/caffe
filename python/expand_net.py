@@ -5,10 +5,47 @@ which expands templates layers to generate a network proto_file
 
 Usage:
     expand_net net_proto_file_in net_proto_file_out
+
+$${id} will expand to "id_value" for fields of string type
+${id} will expand to id_value (no double quotes) for fields of scalar type
 """
 import os
+import re
 from google.protobuf import text_format
 from caffe.proto import caffe_pb2
+
+ID_PATTERN = r'[_a-zA-Z][_a-zA-Z0-9]*'
+PATTERN_EXP = r"""
+(?:
+  \${(?P<named>%(id)s)}       | # <named> group matches ${id}
+  \$\${(?P<str_named>%(id)s)}   # <str_named> group matches $${id} 
+)
+""" % {'id': ID_PATTERN}
+
+PATTERN = re.compile(PATTERN_EXP, re.VERBOSE)
+
+def substitute(template, mapping):
+    # TODO: Skip comments in prototxt
+    def convert(match_obj):
+        named = match_obj.group('named')
+        if named is not None:
+            # print '%s => %s' % (match_obj.group(), mapping[named])
+            return '%s' % (mapping[named],)
+        named = match_obj.group('str_named')
+        if named is not None:
+            # print '%s => "%s"' % (match_obj.group(), mapping[named])
+            return '"%s"' % (mapping[named],)
+        return match_obj.group()
+    result = []
+    for line in template.splitlines(True):
+        try:
+            subtituted = PATTERN.sub(convert, line)
+            # print subtituted.rstrip()
+        except KeyError:
+            # remove the line if no value to the var is given
+            continue
+        result.append(subtituted)
+    return '\n'.join(result)
 
 def join_path(cwd, path):
     result_path = os.path.normpath(os.path.join(cwd, path))
@@ -27,17 +64,15 @@ def expand_template(net, cwd=''):
             layer.name = 'temp_layer_%d' % tmp_layer_counter
             tmp_layer_counter += 1
         layer.name = join_path(cwd, layer.name)
-        
+
         if layer.type == layer.TEMPLATE:
             if layer.HasField('template_param'):
                 # load template and fill it with values
-                with open(layer.template_param.source) as f:
-                    layer_template = f.read()
-                for var in layer.template_param.variable:
-                    layer_template = layer_template.replace('${%s}' % var.name, 
-                                                            var.value)
-                # TODO: Keep missing value as its default
-                
+                with open(layer.template_param.source) as template_file:
+                    layer_template = template_file.read()
+                layer_template = substitute(layer_template,
+                                            {var.name:var.value for var in
+                                             layer.template_param.variable})
                 # generate real network from the specialized template network
                 sub_net = caffe_pb2.NetParameter()
                 text_format.Merge(layer_template, sub_net)
@@ -45,17 +80,17 @@ def expand_template(net, cwd=''):
                 net = expand_template(sub_net, layer.name)
                 expanded_net.layers.MergeFrom(net.layers)
                 layer_template = None
-            else :
+            else:
                 raise Exception
         else:
             # change relative names into absolute ones
-            for i, b in enumerate(layer.bottom):
-                layer.bottom[i] = join_path(cwd, b)
-            for i, t in enumerate(layer.top):
-                layer.top[i] = join_path(cwd, t)
-            
+            for i, bottom in enumerate(layer.bottom):
+                layer.bottom[i] = join_path(cwd, bottom)
+            for i, top in enumerate(layer.top):
+                layer.top[i] = join_path(cwd, top)
+
             expanded_net.layers.add().CopyFrom(layer)
-            
+
     return expanded_net
 
 def main(argv):
@@ -70,8 +105,6 @@ def main(argv):
         with open(sys.argv[2], 'w') as net_file:
             net_file.write(text_format.MessageToString(net))
 
-
 if __name__ == '__main__':
     import sys
     main(sys.argv)
-
