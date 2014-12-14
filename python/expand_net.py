@@ -6,8 +6,23 @@ which expands templates layers to generate a network proto_file
 Usage:
     expand_net net_proto_file_in net_proto_file_out
 
-$${id} will expand to "id_value" for fields of string type
-${id} will expand to id_value (no double quotes) for fields of scalar type
+A template layer example:
+
+    layers {
+      name: "layer_name"
+      type: TEMPLATE
+      template_param {
+        source: "path/to/template/file"
+        variable { name: "id" value: "id_value" }
+      }
+    }
+
+In path/to/template/file
+    ${id} will be expanded to id_value
+    if no id_value is given, the line containing ${id} will be omitted
+
+    ${id = default_value} will expanded to id_value
+    or default_value if id_value is not given.
 """
 import os
 import re
@@ -17,8 +32,10 @@ from caffe.proto import caffe_pb2
 ID_PATTERN = r'[_a-zA-Z][_a-zA-Z0-9]*'
 PATTERN_EXP = r"""
 (?:
-  \${(?P<named>%(id)s)}       | # <named> group matches ${id}
-  \$\${(?P<str_named>%(id)s)}   # <str_named> group matches $${id} 
+ \${
+    (?P<named>%(id)s)            # <named> group matches var id
+    (?:\ *=\ *(?P<default>.+?))? # <default> group matches default value of var
+ }
 )
 """ % {'id': ID_PATTERN}
 
@@ -30,11 +47,13 @@ def substitute(template, mapping):
         named = match_obj.group('named')
         if named is not None:
             # print '%s => %s' % (match_obj.group(), mapping[named])
-            return '%s' % (mapping[named],)
-        named = match_obj.group('str_named')
-        if named is not None:
-            # print '%s => "%s"' % (match_obj.group(), mapping[named])
-            return '"%s"' % (mapping[named],)
+            try:
+                return '%s' % (mapping[named],)
+            except KeyError:
+                if match_obj.group('default') is not None:
+                    return match_obj.group('default').strip()
+                else:
+                    raise KeyError
         return match_obj.group()
     result = []
     for line in template.splitlines(True):
