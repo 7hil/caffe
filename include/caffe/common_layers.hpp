@@ -366,7 +366,7 @@ class SilenceLayer : public Layer<Dtype> {
   virtual inline LayerParameter_LayerType type() const {
     return LayerParameter_LayerType_SILENCE;
   }
-  virtual inline int MinNumBottomBlobs() const { return 1; }
+  virtual inline int MinBottomBlobs() const { return 1; }
   virtual inline int ExactNumTopBlobs() const { return 0; }
 
  protected:
